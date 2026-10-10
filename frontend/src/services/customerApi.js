@@ -1,14 +1,16 @@
 const API_URL = 'http://localhost:8080/api/customers'
 
+// Shows the server's own message when there is one (validation, duplicates, not found...)
 async function handleResponse(res) {
   if (!res.ok) {
-    if (res.status === 409) {
-      throw new Error('A customer with this license number already exists.')
+    let message = `Request failed (${res.status})`
+    try {
+      const body = await res.json()
+      if (body.message) message = body.message
+    } catch {
+      // no JSON body, keep the default message
     }
-    if (res.status === 404) {
-      throw new Error('Customer not found. It may have been deleted.')
-    }
-    throw new Error(`Request failed (${res.status})`)
+    throw new Error(message)
   }
   // DELETE returns 204 No Content
   return res.status === 204 ? null : res.json()
