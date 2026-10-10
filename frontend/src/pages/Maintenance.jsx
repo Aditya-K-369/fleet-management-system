@@ -1,16 +1,11 @@
-import { useState } from 'react'
-
-// Sample vehicles for the dropdown. Later these will come from the API.
-const sampleVehicles = [
-  { id: 1, label: 'Toyota Innova (TS09AB1234)' },
-  { id: 2, label: 'Maruti Swift (TS08CD5678)' },
-  { id: 3, label: 'Hyundai Creta (TS10EF9012)' },
-]
-
-const initialRecords = [
-  { id: 1, vehicleId: 3, serviceDate: '2026-10-07', description: 'Brake pad replacement', cost: 4500, status: 'SCHEDULED' },
-  { id: 2, vehicleId: 1, serviceDate: '2026-09-15', description: 'Oil change and filter', cost: 2200, status: 'COMPLETED' },
-]
+import { useEffect, useState } from 'react'
+import {
+  getMaintenanceRecords,
+  createMaintenanceRecord,
+  completeMaintenanceRecord,
+  deleteMaintenanceRecord,
+} from '../services/maintenanceApi'
+import { getVehicles } from '../services/vehicleApi'
 
 const statusStyles = {
   SCHEDULED: 'bg-warning text-dark',
@@ -20,41 +15,70 @@ const statusStyles = {
 const emptyForm = { vehicleId: '', serviceDate: '', description: '', cost: '' }
 
 function Maintenance() {
-  const [records, setRecords] = useState(initialRecords)
+  const [records, setRecords] = useState([])
+  const [vehicles, setVehicles] = useState([])
   const [form, setForm] = useState(emptyForm)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
-  const vehicleLabel = (id) => sampleVehicles.find((v) => v.id === id)?.label ?? 'Unknown'
+  const loadAll = async () => {
+    try {
+      const [r, v] = await Promise.all([getMaintenanceRecords(), getVehicles()])
+      setRecords(r)
+      setVehicles(v)
+      setError('')
+    } catch (err) {
+      setError(`Could not load data: ${err.message}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadAll()
+  }, [])
 
   const totalCost = records
     .filter((r) => r.status === 'COMPLETED')
-    .reduce((sum, r) => sum + r.cost, 0)
+    .reduce((sum, r) => sum + Number(r.cost), 0)
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value })
   }
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
-    setRecords([
-      ...records,
-      {
-        id: Date.now(),
+    try {
+      await createMaintenanceRecord({
         vehicleId: Number(form.vehicleId),
         serviceDate: form.serviceDate,
         description: form.description,
         cost: Number(form.cost),
-        status: 'SCHEDULED',
-      },
-    ])
-    setForm(emptyForm)
+      })
+      setForm(emptyForm)
+      await loadAll()
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
-  const markCompleted = (id) => {
-    setRecords(records.map((r) => (r.id === id ? { ...r, status: 'COMPLETED' } : r)))
+  const handleComplete = async (id) => {
+    try {
+      await completeMaintenanceRecord(id)
+      await loadAll()
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
-  const handleDelete = (id) => {
-    setRecords(records.filter((r) => r.id !== id))
+  const handleDelete = async (id) => {
+    if (!window.confirm('Delete this maintenance record?')) return
+    try {
+      await deleteMaintenanceRecord(id)
+      await loadAll()
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   return (
@@ -67,6 +91,13 @@ function Maintenance() {
         </div>
       </div>
 
+      {error && (
+        <div className="alert alert-danger d-flex justify-content-between">
+          <span>{error}</span>
+          <button className="btn-close" onClick={() => setError('')}></button>
+        </div>
+      )}
+
       <div className="card mb-4">
         <div className="card-header">Schedule Service</div>
         <div className="card-body">
@@ -74,8 +105,10 @@ function Maintenance() {
             <div className="col-md-6">
               <select className="form-select" name="vehicleId" value={form.vehicleId} onChange={handleChange} required>
                 <option value="">Select vehicle</option>
-                {sampleVehicles.map((v) => (
-                  <option key={v.id} value={v.id}>{v.label}</option>
+                {vehicles.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.brand} {v.name} ({v.registrationNumber})
+                  </option>
                 ))}
               </select>
             </div>
@@ -83,7 +116,7 @@ function Maintenance() {
               <input className="form-control" type="date" name="serviceDate" value={form.serviceDate} onChange={handleChange} required />
             </div>
             <div className="col-md-3">
-              <input className="form-control" type="number" min="0" name="cost" placeholder="Cost" value={form.cost} onChange={handleChange} required />
+              <input className="form-control" type="number" min="0" step="0.01" name="cost" placeholder="Cost" value={form.cost} onChange={handleChange} required />
             </div>
             <div className="col-12">
               <input className="form-control" name="description" placeholder="Description (e.g. oil change)" value={form.description} onChange={handleChange} required />
@@ -108,16 +141,21 @@ function Maintenance() {
             </tr>
           </thead>
           <tbody>
-            {records.map((r) => (
+            {loading && (
+              <tr>
+                <td colSpan="6" className="text-center text-muted">Loading...</td>
+              </tr>
+            )}
+            {!loading && records.map((r) => (
               <tr key={r.id}>
-                <td>{vehicleLabel(r.vehicleId)}</td>
+                <td>{r.vehicle?.brand} {r.vehicle?.name} ({r.vehicle?.registrationNumber})</td>
                 <td>{r.serviceDate}</td>
                 <td>{r.description}</td>
                 <td>{r.cost}</td>
                 <td><span className={`badge ${statusStyles[r.status]}`}>{r.status}</span></td>
                 <td className="text-end">
                   {r.status === 'SCHEDULED' && (
-                    <button className="btn btn-sm btn-outline-success me-2" onClick={() => markCompleted(r.id)}>
+                    <button className="btn btn-sm btn-outline-success me-2" onClick={() => handleComplete(r.id)}>
                       Mark done
                     </button>
                   )}
@@ -127,7 +165,7 @@ function Maintenance() {
                 </td>
               </tr>
             ))}
-            {records.length === 0 && (
+            {!loading && records.length === 0 && (
               <tr>
                 <td colSpan="6" className="text-center text-muted">No maintenance records yet.</td>
               </tr>

@@ -1,20 +1,7 @@
-import { useState } from 'react'
-
-// Sample data for the dropdowns. Later these will come from the API.
-const sampleCustomers = [
-  { id: 1, name: 'Ravi Kumar' },
-  { id: 2, name: 'Anita Sharma' },
-]
-
-const sampleVehicles = [
-  { id: 1, label: 'Toyota Innova (TS09AB1234)', dailyRate: 2500 },
-  { id: 2, label: 'Maruti Swift (TS08CD5678)', dailyRate: 1200 },
-  { id: 3, label: 'Hyundai Creta (TS10EF9012)', dailyRate: 2200 },
-]
-
-const initialBookings = [
-  { id: 1, customerId: 1, vehicleId: 2, startDate: '2026-10-05', endDate: '2026-10-08', total: 3600, status: 'ACTIVE' },
-]
+import { useEffect, useState } from 'react'
+import { getBookings, createBooking, completeBooking, cancelBooking } from '../services/bookingApi'
+import { getVehicles } from '../services/vehicleApi'
+import { getCustomers } from '../services/customerApi'
 
 const statusStyles = {
   ACTIVE: 'bg-primary',
@@ -27,54 +14,84 @@ const emptyForm = { customerId: '', vehicleId: '', startDate: '', endDate: '' }
 function calcDays(start, end) {
   if (!start || !end) return 0
   const diff = (new Date(end) - new Date(start)) / (1000 * 60 * 60 * 24)
-  return Math.max(1, Math.round(diff))
+  return Math.max(0, Math.round(diff))
 }
 
 function Bookings() {
-  const [bookings, setBookings] = useState(initialBookings)
+  const [bookings, setBookings] = useState([])
+  const [customers, setCustomers] = useState([])
+  const [vehicles, setVehicles] = useState([])
   const [form, setForm] = useState(emptyForm)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  const selectedVehicle = sampleVehicles.find((v) => v.id === Number(form.vehicleId))
-  const days = calcDays(form.startDate, form.endDate)
-  const previewTotal = selectedVehicle ? days * selectedVehicle.dailyRate : 0
+  const loadAll = async () => {
+    try {
+      const [b, c, v] = await Promise.all([getBookings(), getCustomers(), getVehicles()])
+      setBookings(b)
+      setCustomers(c)
+      setVehicles(v)
+      setError('')
+    } catch (err) {
+      setError(`Could not load data: ${err.message}`)
+    } finally {
+      setLoading(false)
+    }
+  }
 
-  const customerName = (id) => sampleCustomers.find((c) => c.id === id)?.name ?? 'Unknown'
-  const vehicleLabel = (id) => sampleVehicles.find((v) => v.id === id)?.label ?? 'Unknown'
+  useEffect(() => {
+    loadAll()
+  }, [])
+
+  const bookableVehicles = vehicles.filter((v) => v.available)
+  const selectedVehicle = vehicles.find((v) => v.id === Number(form.vehicleId))
+  const days = calcDays(form.startDate, form.endDate)
+  const previewTotal = selectedVehicle ? days * Number(selectedVehicle.rentalPricePerDay) : 0
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value })
     setError('')
   }
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
-    if (form.endDate < form.startDate) {
-      setError('End date cannot be before start date.')
+    if (days < 1) {
+      setError('End date must be after start date.')
       return
     }
-    setBookings([
-      ...bookings,
-      {
-        id: Date.now(),
+    try {
+      await createBooking({
         customerId: Number(form.customerId),
         vehicleId: Number(form.vehicleId),
         startDate: form.startDate,
         endDate: form.endDate,
-        total: previewTotal,
-        status: 'ACTIVE',
-      },
-    ])
-    setForm(emptyForm)
+      })
+      setForm(emptyForm)
+      await loadAll()
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
-  const updateStatus = (id, status) => {
-    setBookings(bookings.map((b) => (b.id === id ? { ...b, status } : b)))
+  const handleStatusChange = async (action, id) => {
+    try {
+      await action(id)
+      await loadAll()
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   return (
     <div>
       <h2 className="mb-4">Bookings</h2>
+
+      {error && (
+        <div className="alert alert-danger d-flex justify-content-between">
+          <span>{error}</span>
+          <button className="btn-close" onClick={() => setError('')}></button>
+        </div>
+      )}
 
       <div className="card mb-4">
         <div className="card-header">New Booking</div>
@@ -83,16 +100,18 @@ function Bookings() {
             <div className="col-md-6">
               <select className="form-select" name="customerId" value={form.customerId} onChange={handleChange} required>
                 <option value="">Select customer</option>
-                {sampleCustomers.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
+                {customers.map((c) => (
+                  <option key={c.id} value={c.id}>{c.fullName}</option>
                 ))}
               </select>
             </div>
             <div className="col-md-6">
               <select className="form-select" name="vehicleId" value={form.vehicleId} onChange={handleChange} required>
                 <option value="">Select vehicle</option>
-                {sampleVehicles.map((v) => (
-                  <option key={v.id} value={v.id}>{v.label}</option>
+                {bookableVehicles.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.brand} {v.name} ({v.registrationNumber}) - {v.rentalPricePerDay}/day
+                  </option>
                 ))}
               </select>
             </div>
@@ -106,15 +125,10 @@ function Bookings() {
             </div>
             <div className="col-md-4 d-flex align-items-end">
               <div>
-                <div className="text-muted small">Estimated total</div>
+                <div className="text-muted small">Estimated total ({days} {days === 1 ? 'day' : 'days'})</div>
                 <div className="fs-5 fw-semibold">{previewTotal}</div>
               </div>
             </div>
-            {error && (
-              <div className="col-12">
-                <div className="alert alert-danger py-2 mb-0">{error}</div>
-              </div>
-            )}
             <div className="col-12">
               <button className="btn btn-dark" type="submit">Create Booking</button>
             </div>
@@ -135,20 +149,25 @@ function Bookings() {
             </tr>
           </thead>
           <tbody>
-            {bookings.map((b) => (
+            {loading && (
+              <tr>
+                <td colSpan="6" className="text-center text-muted">Loading...</td>
+              </tr>
+            )}
+            {!loading && bookings.map((b) => (
               <tr key={b.id}>
-                <td>{customerName(b.customerId)}</td>
-                <td>{vehicleLabel(b.vehicleId)}</td>
+                <td>{b.customer?.fullName}</td>
+                <td>{b.vehicle?.brand} {b.vehicle?.name} ({b.vehicle?.registrationNumber})</td>
                 <td>{b.startDate} to {b.endDate}</td>
-                <td>{b.total}</td>
+                <td>{b.totalPrice}</td>
                 <td><span className={`badge ${statusStyles[b.status]}`}>{b.status}</span></td>
                 <td className="text-end">
                   {b.status === 'ACTIVE' && (
                     <>
-                      <button className="btn btn-sm btn-outline-success me-2" onClick={() => updateStatus(b.id, 'COMPLETED')}>
+                      <button className="btn btn-sm btn-outline-success me-2" onClick={() => handleStatusChange(completeBooking, b.id)}>
                         Complete
                       </button>
-                      <button className="btn btn-sm btn-outline-danger" onClick={() => updateStatus(b.id, 'CANCELLED')}>
+                      <button className="btn btn-sm btn-outline-danger" onClick={() => handleStatusChange(cancelBooking, b.id)}>
                         Cancel
                       </button>
                     </>
@@ -156,7 +175,7 @@ function Bookings() {
                 </td>
               </tr>
             ))}
-            {bookings.length === 0 && (
+            {!loading && bookings.length === 0 && (
               <tr>
                 <td colSpan="6" className="text-center text-muted">No bookings yet.</td>
               </tr>

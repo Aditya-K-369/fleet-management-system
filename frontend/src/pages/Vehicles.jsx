@@ -1,86 +1,146 @@
-import { useState } from 'react'
-
-const initialVehicles = [
-  { id: 1, make: 'Toyota', model: 'Innova', plateNumber: 'TS09AB1234', type: 'SUV', dailyRate: 2500, status: 'AVAILABLE' },
-  { id: 2, make: 'Maruti', model: 'Swift', plateNumber: 'TS08CD5678', type: 'Car', dailyRate: 1200, status: 'RENTED' },
-  { id: 3, make: 'Hyundai', model: 'Creta', plateNumber: 'TS10EF9012', type: 'SUV', dailyRate: 2200, status: 'IN_MAINTENANCE' },
-]
-
-const statusStyles = {
-  AVAILABLE: 'bg-success',
-  RENTED: 'bg-primary',
-  IN_MAINTENANCE: 'bg-warning text-dark',
-}
+import { useEffect, useState } from 'react'
+import {
+  getVehicles,
+  createVehicle,
+  updateVehicle,
+  deleteVehicle,
+} from '../services/vehicleApi'
 
 const emptyForm = {
-  make: '',
+  name: '',
+  brand: '',
   model: '',
-  plateNumber: '',
-  type: 'Car',
-  dailyRate: '',
-  status: 'AVAILABLE',
+  registrationNumber: '',
+  rentalPricePerDay: '',
+  seatingCapacity: '',
+  available: true,
 }
 
 function Vehicles() {
-  const [vehicles, setVehicles] = useState(initialVehicles)
+  const [vehicles, setVehicles] = useState([])
   const [form, setForm] = useState(emptyForm)
+  const [editingId, setEditingId] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
-  const handleChange = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value })
+  const loadVehicles = async () => {
+    try {
+      setVehicles(await getVehicles())
+      setError('')
+    } catch (err) {
+      setError(`Could not load vehicles: ${err.message}`)
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const handleSubmit = (e) => {
+  useEffect(() => {
+    loadVehicles()
+  }, [])
+
+  const handleChange = (e) => {
+    const { name, value, type, checked } = e.target
+    setForm({ ...form, [name]: type === 'checkbox' ? checked : value })
+  }
+
+  const handleSubmit = async (e) => {
     e.preventDefault()
-    const newVehicle = {
+    const payload = {
       ...form,
-      id: Date.now(),
-      dailyRate: Number(form.dailyRate),
+      rentalPricePerDay: Number(form.rentalPricePerDay),
+      seatingCapacity: Number(form.seatingCapacity),
     }
-    setVehicles([...vehicles, newVehicle])
+    try {
+      if (editingId) {
+        await updateVehicle(editingId, payload)
+      } else {
+        await createVehicle(payload)
+      }
+      setForm(emptyForm)
+      setEditingId(null)
+      await loadVehicles()
+    } catch (err) {
+      setError(`Could not save vehicle: ${err.message}`)
+    }
+  }
+
+  const handleEdit = (vehicle) => {
+    setEditingId(vehicle.id)
+    setForm({
+      name: vehicle.name,
+      brand: vehicle.brand,
+      model: vehicle.model,
+      registrationNumber: vehicle.registrationNumber,
+      rentalPricePerDay: vehicle.rentalPricePerDay,
+      seatingCapacity: vehicle.seatingCapacity,
+      available: vehicle.available,
+    })
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  const handleCancelEdit = () => {
+    setEditingId(null)
     setForm(emptyForm)
   }
 
-  const handleDelete = (id) => {
-    setVehicles(vehicles.filter((v) => v.id !== id))
+  const handleDelete = async (id) => {
+    if (!window.confirm('Delete this vehicle?')) return
+    try {
+      await deleteVehicle(id)
+      await loadVehicles()
+    } catch (err) {
+      setError(`Could not delete vehicle: ${err.message}`)
+    }
   }
 
   return (
     <div>
       <h2 className="mb-4">Vehicles</h2>
 
+      {error && (
+        <div className="alert alert-danger d-flex justify-content-between">
+          <span>{error}</span>
+          <button className="btn-close" onClick={() => setError('')}></button>
+        </div>
+      )}
+
       <div className="card mb-4">
-        <div className="card-header">Add Vehicle</div>
+        <div className="card-header">{editingId ? 'Edit Vehicle' : 'Add Vehicle'}</div>
         <div className="card-body">
           <form onSubmit={handleSubmit} className="row g-3">
             <div className="col-md-3">
-              <input className="form-control" name="make" placeholder="Make" value={form.make} onChange={handleChange} required />
+              <input className="form-control" name="name" placeholder="Name (e.g. Swift)" value={form.name} onChange={handleChange} required />
+            </div>
+            <div className="col-md-3">
+              <input className="form-control" name="brand" placeholder="Brand" value={form.brand} onChange={handleChange} required />
             </div>
             <div className="col-md-3">
               <input className="form-control" name="model" placeholder="Model" value={form.model} onChange={handleChange} required />
             </div>
             <div className="col-md-3">
-              <input className="form-control" name="plateNumber" placeholder="Plate number" value={form.plateNumber} onChange={handleChange} required />
+              <input className="form-control" name="registrationNumber" placeholder="Registration number" value={form.registrationNumber} onChange={handleChange} required />
             </div>
             <div className="col-md-3">
-              <select className="form-select" name="type" value={form.type} onChange={handleChange}>
-                <option>Car</option>
-                <option>SUV</option>
-                <option>Van</option>
-                <option>Bike</option>
-              </select>
+              <input className="form-control" type="number" min="0" step="0.01" name="rentalPricePerDay" placeholder="Price per day" value={form.rentalPricePerDay} onChange={handleChange} required />
             </div>
             <div className="col-md-3">
-              <input className="form-control" type="number" min="0" name="dailyRate" placeholder="Daily rate" value={form.dailyRate} onChange={handleChange} required />
+              <input className="form-control" type="number" min="1" name="seatingCapacity" placeholder="Seats" value={form.seatingCapacity} onChange={handleChange} required />
+            </div>
+            <div className="col-md-3 d-flex align-items-center">
+              <div className="form-check">
+                <input className="form-check-input" type="checkbox" id="available" name="available" checked={form.available} onChange={handleChange} />
+                <label className="form-check-label" htmlFor="available">Available</label>
+              </div>
             </div>
             <div className="col-md-3">
-              <select className="form-select" name="status" value={form.status} onChange={handleChange}>
-                <option value="AVAILABLE">Available</option>
-                <option value="RENTED">Rented</option>
-                <option value="IN_MAINTENANCE">In maintenance</option>
-              </select>
-            </div>
-            <div className="col-md-3">
-              <button className="btn btn-dark" type="submit">Add Vehicle</button>
+              <button className="btn btn-dark me-2" type="submit">
+                {editingId ? 'Update' : 'Add Vehicle'}
+              </button>
+              {editingId && (
+                <button className="btn btn-outline-secondary" type="button" onClick={handleCancelEdit}>
+                  Cancel
+                </button>
+              )}
             </div>
           </form>
         </div>
@@ -91,35 +151,45 @@ function Vehicles() {
           <thead className="table-dark">
             <tr>
               <th>Vehicle</th>
-              <th>Plate</th>
-              <th>Type</th>
-              <th>Daily rate</th>
+              <th>Model</th>
+              <th>Registration</th>
+              <th>Seats</th>
+              <th>Price / day</th>
               <th>Status</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {vehicles.map((v) => (
+            {loading && (
+              <tr>
+                <td colSpan="7" className="text-center text-muted">Loading...</td>
+              </tr>
+            )}
+            {!loading && vehicles.map((v) => (
               <tr key={v.id}>
-                <td>{v.make} {v.model}</td>
-                <td>{v.plateNumber}</td>
-                <td>{v.type}</td>
-                <td>{v.dailyRate}</td>
+                <td>{v.brand} {v.name}</td>
+                <td>{v.model}</td>
+                <td>{v.registrationNumber}</td>
+                <td>{v.seatingCapacity}</td>
+                <td>{v.rentalPricePerDay}</td>
                 <td>
-                  <span className={`badge ${statusStyles[v.status]}`}>
-                    {v.status.replace('_', ' ')}
+                  <span className={`badge ${v.available ? 'bg-success' : 'bg-secondary'}`}>
+                    {v.available ? 'Available' : 'Unavailable'}
                   </span>
                 </td>
                 <td className="text-end">
+                  <button className="btn btn-sm btn-outline-primary me-2" onClick={() => handleEdit(v)}>
+                    Edit
+                  </button>
                   <button className="btn btn-sm btn-outline-danger" onClick={() => handleDelete(v.id)}>
                     Delete
                   </button>
                 </td>
               </tr>
             ))}
-            {vehicles.length === 0 && (
+            {!loading && vehicles.length === 0 && (
               <tr>
-                <td colSpan="6" className="text-center text-muted">No vehicles yet.</td>
+                <td colSpan="7" className="text-center text-muted">No vehicles yet.</td>
               </tr>
             )}
           </tbody>
